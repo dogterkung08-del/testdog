@@ -26,6 +26,7 @@ handler = WebhookHandler(CHANNEL_SECRET)
 
 EXCEL_FILE = "data.xlsx"
 DIRECTOR_FILE = "name.xlsx"
+LOCATION_FILE = "lo.xlsx"
 
 def search_excel_all_sheets(file_path, search_term):
     """ ฟังก์ชันช่วยค้นหาคำจากทุก Sheet ในไฟล์ Excel แบบ Contains """
@@ -55,10 +56,47 @@ def search_data(user_text):
         cleaned_text = re.sub(r"\s+", " ", user_text).strip()
 
         # -------------------------------------------------------------
-        # 1. ค้นหาข้อมูล ผอ. จากไฟล์ name.xlsx
+        # 1. ค้นหาข้อมูลโลเคชั่น / แผนที่ จากไฟล์ lo.xlsx
+        # -------------------------------------------------------------
+        is_location_query = (
+            re.search(r"โลเคชั่น|โลเคชัน|location|map|แผนที่|ขอโล", cleaned_text, re.IGNORECASE) 
+            or (re.search(r"(^โล|โล$)", cleaned_text) and cleaned_text != "พิษณุโลก")
+        )
+
+        if is_location_query:
+            # ตัดคำค้นหาที่ไม่จำเป็นออก ให้เหลือเฉพาะชื่อจังหวัด/หน่วยงาน
+            search_term = re.sub(r"ขอ|โลเคชั่น|โลเคชัน|location|map|แผนที่", " ", cleaned_text, flags=re.IGNORECASE)
+            search_term = re.sub(r"^โล|โล$", " ", search_term)
+            search_term = re.sub(r"\s+", " ", search_term).strip()
+
+            if not search_term:
+                return "กรุณาระบุชื่อจังหวัดหรือหน่วยงาน เช่น 'โลเคชั่น นนทบุรี' ครับ"
+
+            matched_df, err = search_excel_all_sheets(LOCATION_FILE, search_term)
+            if err:
+                return err
+
+            if not matched_df.empty:
+                results_text = f"📍 ผลการค้นหาโลเคชั่น ({search_term}):\n\n"
+                for _, row in matched_df.iterrows():
+                    org_name = row.iloc[0] if len(row) > 0 else ""
+                    map_url = row.iloc[1] if len(row) > 1 else ""
+                    updated_date = row.iloc[2] if len(row) > 2 else ""
+
+                    results_text += f"🏢 {org_name}\n"
+                    results_text += f"📍 โลเคชั่น: {map_url}\n"
+                    if updated_date:
+                        results_text += f"📅 อัปเดตเมื่อ: {updated_date}\n"
+                    results_text += "------------------------------\n"
+
+                return results_text.strip()
+            else:
+                return "พิมพ์อะไรผิดไปรึเปล่า ลองดูใหม่ดิ วุ้วววววว!!"
+
+        # -------------------------------------------------------------
+        # 2. ค้นหาข้อมูล ผอ. จากไฟล์ name.xlsx
         # -------------------------------------------------------------
         if "ผอ" in cleaned_text:
-            # ตัดคำว่า "ผอ.", "ผอ", "ของ" ออก และจัดการช่องว่าง
             search_term = re.sub(r"ผอ\.|ผอ|ของ", " ", cleaned_text)
             search_term = re.sub(r"\s+", " ", search_term).strip()
 
@@ -87,7 +125,7 @@ def search_data(user_text):
                 return "พิมพ์อะไรผิดไปรึเปล่า ลองดูใหม่ดิ วุ้วววววว!!"
 
         # -------------------------------------------------------------
-        # 2. ค้นหาข้อมูลทั่วไปจากไฟล์ data.xlsx
+        # 3. ค้นหาข้อมูลทั่วไปจากไฟล์ data.xlsx
         # -------------------------------------------------------------
         search_term = cleaned_text
         matched_df, err = search_excel_all_sheets(EXCEL_FILE, search_term)
@@ -98,7 +136,7 @@ def search_data(user_text):
             response_text = ""
             for _, row_data in matched_df.head(10).iterrows():
                 val_a = row_data.iloc[0] if len(row_data) > 0 else ""
-                val_b = row_data.iloc[1] if len(row_data) > 1 else ""
+                val_b = row_data.iloc[1] if len(row_data) > 0 else ""
                 val_c = row_data.iloc[2] if len(row_data) > 2 else ""
                 val_d = row_data.iloc[3] if len(row_data) > 3 else ""
 
