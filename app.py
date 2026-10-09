@@ -11,7 +11,7 @@ from linebot.models import (
 
 app = Flask(__name__)
 
-# ดึง Key จาก Environment Variables หรือใช้ค่า Token สำรองหากหาไม่เจอ
+# ดึง Key จาก Environment Variables หรือใช้ค่า Token สำรอง
 CHANNEL_ACCESS_TOKEN = os.environ.get(
     'CHANNEL_ACCESS_TOKEN', 
     'XVft4ru1WrRaNg3p3VDPzNOjy3gmLuW1hdQuwh/qOKPjqr5hTL3UfIcZzFUE98wCyB713E3gurGNGTNqVf7wzmEjsiXZZ9Af7HUqM1I8K+DLycAHYDIgjQoIrkxJ1DLUNnlI8yeTq6u6w71N0VYVEAdB04t89/1O/w1cDnyilFU='
@@ -27,28 +27,51 @@ handler = WebhookHandler(CHANNEL_SECRET)
 EXCEL_FILE = "data.xlsx"
 DIRECTOR_FILE = "name.xlsx"
 
+def search_excel_all_sheets(file_path, search_term):
+    """ ฟังก์ชันช่วยค้นหาคำจากทุก Sheet ในไฟล์ Excel แบบ Contains """
+    if not os.path.exists(file_path):
+        return None, f"⚠️ ไม่พบไฟล์ {file_path} ในระบบ กรุณาตรวจสอบชื่อไฟล์ครับ"
+
+    xls = pd.ExcelFile(file_path)
+    all_matched = []
+
+    for sheet_name in xls.sheet_names:
+        df = pd.read_excel(xls, sheet_name=sheet_name, dtype=str).fillna("")
+        # ค้นหาทุกคอลัมน์ที่มีคำค้นหาปนอยู่ (ไม่สนตัวพิมพ์เล็ก-ใหญ่ และค้นหาบางส่วนได้)
+        mask = df.astype(str).apply(
+            lambda x: x.str.contains(search_term, regex=False, case=False, na=False)
+        ).any(axis=1)
+        matched = df[mask]
+        if not matched.empty:
+            all_matched.append(matched)
+
+    if all_matched:
+        return pd.concat(all_matched, ignore_index=True), None
+    return pd.DataFrame(), None
+
 def search_data(user_text):
     try:
+        # ยุบช่องว่างที่เว้นวรรคซ้ำๆ ให้เหลือ 1 ช่องว่าง และตัดช่องว่างหน้า-หลัง
+        cleaned_text = re.sub(r"\s+", " ", user_text).strip()
+
+        # -------------------------------------------------------------
         # 1. ค้นหาข้อมูล ผอ. จากไฟล์ name.xlsx
-        if "ผอ" in user_text:
-            search_term = re.sub(r"ผอ\.|ผอ|ของ", "", user_text).strip()
+        # -------------------------------------------------------------
+        if "ผอ" in cleaned_text:
+            # ตัดคำว่า "ผอ.", "ผอ", "ของ" ออก และจัดการช่องว่าง
+            search_term = re.sub(r"ผอ\.|ผอ|ของ", " ", cleaned_text)
+            search_term = re.sub(r"\s+", " ", search_term).strip()
+
             if not search_term:
-                search_term = user_text
+                return "กรุณาระบุชื่อหน่วยงานหรือจังหวัด เช่น 'ผอ. กระบี่' ครับ"
 
-            if not os.path.exists(DIRECTOR_FILE):
-                return f"⚠️ ไม่พบไฟล์ {DIRECTOR_FILE} ในระบบ กรุณาตรวจสอบชื่อไฟล์ครับ"
+            matched_df, err = search_excel_all_sheets(DIRECTOR_FILE, search_term)
+            if err:
+                return err
 
-            df_dir = pd.read_excel(DIRECTOR_FILE, dtype=str).fillna("")
-            mask = df_dir.iloc[:, 0].str.contains(
-                search_term, regex=False, case=False, na=False
-            ) | df_dir.iloc[:, 1].str.contains(
-                search_term, regex=False, case=False, na=False
-            )
-            matched_rows = df_dir[mask]
-
-            if not matched_rows.empty:
+            if not matched_df.empty:
                 results_text = f"📋 ผลการค้นหาข้อมูล ผอ. ({search_term}):\n\n"
-                for _, row in matched_rows.iterrows():
+                for _, row in matched_df.iterrows():
                     org_name = row.iloc[0] if len(row) > 0 else ""
                     director_name = row.iloc[1] if len(row) > 1 else ""
                     updated_date = row.iloc[2] if len(row) > 2 else ""
@@ -63,19 +86,17 @@ def search_data(user_text):
             else:
                 return "พิมพ์อะไรผิดไปรึเปล่า ลองดูใหม่ดิ วุ้วววววว!!"
 
+        # -------------------------------------------------------------
         # 2. ค้นหาข้อมูลทั่วไปจากไฟล์ data.xlsx
-        if not os.path.exists(EXCEL_FILE):
-            return f"⚠️ ไม่พบไฟล์ {EXCEL_FILE} ในระบบ กรุณาตรวจสอบชื่อไฟล์ครับ"
+        # -------------------------------------------------------------
+        search_term = cleaned_text
+        matched_df, err = search_excel_all_sheets(EXCEL_FILE, search_term)
+        if err:
+            return err
 
-        df = pd.read_excel(EXCEL_FILE, dtype=str).fillna("")
-        mask = df.astype(str).apply(
-            lambda x: x.str.contains(user_text, regex=False, case=False, na=False)
-        ).any(axis=1)
-        matched_rows = df[mask]
-
-        if not matched_rows.empty:
+        if not matched_df.empty:
             response_text = ""
-            for _, row_data in matched_rows.head(10).iterrows():
+            for _, row_data in matched_df.head(10).iterrows():
                 val_a = row_data.iloc[0] if len(row_data) > 0 else ""
                 val_b = row_data.iloc[1] if len(row_data) > 1 else ""
                 val_c = row_data.iloc[2] if len(row_data) > 2 else ""
@@ -83,17 +104,17 @@ def search_data(user_text):
 
                 response_text += f"{val_a}\n{val_b}\n{val_c}\n{val_d}\n\n"
 
-            if len(matched_rows) > 10:
-                response_text += f"\n*(แสดง 10 รายการแรก จากทั้งหมด {len(matched_rows)} รายการ)*"
+            if len(matched_df) > 10:
+                response_text += f"\n*(แสดง 10 รายการแรก จากทั้งหมด {len(matched_df)} รายการ)*"
 
             return response_text.strip()
-        else:
-            return "พิมพ์อะไรผิดไปรึเปล่า ลองดูใหม่ดิ วุ้วววววว!!"
+
+        return "พิมพ์อะไรผิดไปรึเปล่า ลองดูใหม่ดิ วุ้วววววว!!"
 
     except Exception:
         return "อิหยัง ？"
 
-# Route สำหรับเช็กสถานะบอท (ใช้ป้องกัน Server หลับ)
+# Route สำหรับเช็กสถานะบอท
 @app.route("/", methods=['GET'])
 def health_check():
     return "Bot is running fine!", 200
@@ -111,7 +132,7 @@ def callback():
 
     return 'OK'
 
-# ทำงานเมื่อมีข้อความเข้าในกลุ่มหรือแชตส่วนตัว
+# ทำงานเมื่อมีข้อความเข้า
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
     user_text = event.message.text.strip()
